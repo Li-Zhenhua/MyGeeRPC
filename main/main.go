@@ -2,11 +2,10 @@ package main
 
 import (
 	"MyGeeRPC"
-	"MyGeeRPC/codec"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -21,7 +20,7 @@ func startServer(addr chan string) {
 	MyGeeRPC.Accept(l)
 }
 
-func main() {
+/*func main() {
 	addr := make(chan string)
 	go startServer(addr)
 
@@ -44,4 +43,30 @@ func main() {
 		_ = cc.ReadBody(&reply)
 		log.Println("reply:", reply)
 	}
+}*/
+
+func main() {
+	log.SetFlags(0)
+	addr := make(chan string)
+	go startServer(addr)
+	client, _ := MyGeeRPC.Dial("tcp", <-addr)
+	defer func() { _ = client.Close() }()
+
+	time.Sleep(time.Second)
+
+	var wg sync.WaitGroup
+	//测试发送请求
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			args := fmt.Sprintf("request : %d", i)
+			var reply string
+			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+				log.Fatal("call Foo.Sum error:", err)
+			}
+			log.Println("reply : ", reply)
+		}(i)
+	}
+	wg.Wait()
 }
