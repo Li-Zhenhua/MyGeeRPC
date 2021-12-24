@@ -4,24 +4,30 @@ import (
 	"MyGeeRPC/codec"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 const MagicNum = 0x3bef5c
 
 type Option struct {
-	MagicNum  int
-	CodecType codec.Type
+	MagicNum       int
+	CodecType      codec.Type
+	ConnectTimeout time.Duration
+	HandleTimeout  time.Duration
 }
 
 var DefaultOption = &Option{
-	MagicNum:  MagicNum,
-	CodecType: codec.GobType,
+	MagicNum:       MagicNum,
+	CodecType:      codec.GobType,
+	ConnectTimeout: time.Second * 10,
+	//HandleTimeout: time.Second,
 }
 
 type Server struct {
@@ -71,12 +77,12 @@ func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 		log.Printf("rpc server: invalid codec type %s", opt.CodecType)
 		return
 	}
-	server.serveCodec(f(conn))
+	server.serveCodec(f(conn), &opt)
 }
 
 var invalidRequest = struct{}{}
 
-func (server *Server) serveCodec(cc codec.Codec) {
+func (server *Server) serveCodec(cc codec.Codec, opt *Option) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
@@ -90,7 +96,7 @@ func (server *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go server.handleRequest(cc, req, sending, wg)
+		go server.handleRequest(cc, req, sending, wg, opt.HandleTimeout)
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -150,17 +156,38 @@ func (server *Server) sendResponse(cc codec.Codec, header *codec.Header, body in
 	}
 }
 
-func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+func (server *Server) handleRequest(cc codec.Codec, req *request,
+	sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
+	called := make(chan struct{})
+	sent := make(chan struct{})
 	//log.Println(req.header, req.argv.Elem())
 	//req.replyv = reflect.ValueOf(fmt.Sprintf("response : %d", req.header.Seq))
-	err := req.svc.call(req.mtype, req.argv, req.replyv)
-	if err != nil {
-		req.header.Error = err.Error()
-		server.sendResponse(cc, req.header, invalidRequest, sending)
+	go func() {
+		err := req.svc.call(req.mtype, req.argv, req.replyv)
+		called <- struct{}{}
+		if err != nil {
+			req.header.Error = err.Error()
+			server.sendResponse(cc, req.header, invalidRequest, sending)
+			sent <- struct{}{}
+			return
+		}
+		server.sendResponse(cc, req.header, req.replyv.Interface(), sending)
+	}()
+
+	if timeout == 0 {
+		<-called
+		<-sent
 		return
 	}
-	server.sendResponse(cc, req.header, req.replyv.Interface(), sending)
+
+	select {
+	case <-time.After(timeout):
+		req.header.Error = fmt.Sprintf("rpc server: 请求处理超时！处理时间超过了 %s 秒", timeout)
+	case <-called:
+		<-sent
+	}
+
 }
 
 func (server *Server) Register(rcvr interface{}) error {

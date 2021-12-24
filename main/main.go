@@ -2,6 +2,7 @@ package main
 
 import (
 	"MyGeeRPC"
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -62,7 +63,7 @@ func main() {
 			defer wg.Done()
 			args := fmt.Sprintf("request : %d", i)
 			var reply string
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+			if err := client.Call(context.Background(), "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
 			log.Println("reply : ", reply)
