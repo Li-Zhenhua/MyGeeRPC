@@ -185,6 +185,7 @@ func (server *Server) handleRequest(cc codec.Codec, req *request,
 	select {
 	case <-time.After(timeout):
 		req.header.Error = fmt.Sprintf("rpc server: 请求处理超时！处理时间超过了 %s 秒", timeout)
+		server.sendResponse(cc, req.header, invalidRequest, sending)
 	case <-called:
 		<-sent
 	}
