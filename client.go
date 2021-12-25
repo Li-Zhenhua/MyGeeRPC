@@ -2,6 +2,7 @@ package MyGeeRPC
 
 import (
 	"MyGeeRPC/codec"
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,7 +55,7 @@ func (client *Client) Close() error {
 
 var _ io.Closer = (*Client)(nil)
 
-func (client *Client) isAvailable() bool {
+func (client *Client) IsAvailable() bool {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	return !client.shutdown && !client.closing
@@ -257,4 +260,38 @@ func dialTimeout(f newClientFunc, network, address string, opts ...*Option) (cli
 func Dial(network, address string, opts ...*Option) (client *Client, err error) {
 
 	return dialTimeout(NewClient, network, address, opts...)
+}
+
+func NewHTTPClient(conn net.Conn, opt *Option) (*Client, error) {
+	_, _ = io.WriteString(conn, fmt.Sprintf("CONNECT %s HTTP/1.0\n\n", defaultRPCPath))
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "CONNECT"})
+	if err == nil && resp.Status == connected {
+		return NewClient(conn, opt)
+	}
+	if err == nil {
+		err = errors.New("unexpected HTTP response: " + resp.Status)
+	}
+	return nil, err
+}
+
+// DialHTTP connects to an HTTP RPC server at the specified network address
+func DialHTTP(network, address string, opts ...*Option) (*Client, error) {
+	return dialTimeout(NewHTTPClient, network, address, opts...)
+}
+
+//一个统一的连接调用接口
+func XDial(rpcAddr string, opts ...*Option) (*Client, error) {
+	parts := strings.Split(rpcAddr, "@")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("rpc client err: wrong format '%s', expect protocol@addr", rpcAddr)
+	}
+	protocol, addr := parts[0], parts[1]
+	switch protocol {
+	case "http":
+		return DialHTTP("tcp", addr, opts...)
+	default:
+		// tcp, unix or other transport protocol
+		return Dial(protocol, addr, opts...)
+	}
 }
