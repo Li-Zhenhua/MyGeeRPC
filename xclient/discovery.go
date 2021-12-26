@@ -49,6 +49,7 @@ func (d *MultiServersDiscovery) Update(servers []string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.servers = servers
+
 	return nil
 }
 

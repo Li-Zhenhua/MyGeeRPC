@@ -105,5 +105,6 @@ func (xc *XClient) Broadcast(ctx context.Context, serviceMethod string, args, re
 		}(rpcAddr)
 	}
 	wg.Wait()
+	cancel()
 	return e
 }
